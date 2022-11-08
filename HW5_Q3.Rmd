@@ -1,0 +1,185 @@
+---
+title: "HW5_Q3"
+output: pdf_document
+date: "2022-11-08"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(MASS)
+library(caret)
+library(glmnet)
+library(tidyverse)
+library(car)
+```
+
+## Question 3
+
+### a
+
+```{r}
+library(MASS)
+dim(Boston)
+Boston$logcrim = log(Boston$crim) # create log transform of crim
+summary(Boston)
+set.seed(12345)
+train = runif(nrow(Boston))<.5 # pick train/test split 50% train, 50% test
+```
+
+```{r}
+table(train)
+```
+
+### b
+
+```{r}
+train_set <- Boston[train, ]
+test_set <- Boston[!train, ]
+m1 <- lm(logcrim ~. - crim, data = train_set)
+pred_m1 <- predict(m1, newdata = test_set)
+mse <- mean((test_set$logcrim - pred_m1)^2)
+par(mfrow = c(2,2))
+plot(m1)
+summary(m1)
+mse
+```
+
+```{r}
+car::vif(m1)
+```
+
+As seen above, the residual vs fitted plot hugs the middle line, which shows that the relationship between the predictors and the dependent variable is indeed linear. However, in the scale-location plot, we can see that the residuals are not randomly distributed. There is a non-constant variance happening, which means that there is heteroskedacticity.
+
+According to VIFs, the full model might have the multicollinearity issue. - In the residuals
+plots, the variances are not very constant. - The test MSE = 0.7083435. - From the summary, zn, nox, rad,
+black are the most significant predictors (with large t-statistic or extremely small p-values). chas and age
+are also relatively important.
+
+### c
+
+```{r}
+stepAIC(m1, direction = "backward")
+m2 <- lm(logcrim ~ zn + indus + chas + nox + age + rad + black + lstat, data = train_set)
+pred_m2 <- predict(m2, newdata = test_set)
+mse_m2 <- mean((test_set$logcrim - pred_m2)^2)
+mse_m2
+```
+
+The test set MSE is 0.7033381.
+
+### d
+
+```{r}
+train_X <- model.matrix(logcrim ~ .-1, data = train_set[, -1])
+train_Y <- train_set$logcrim
+cv_ridge <- cv.glmnet(train_X, train_Y, alpha = 0)
+best_lambda <- cv_ridge$lambda.min
+
+
+test_X <- model.matrix(logcrim ~ .-1, data = test_set[, -1])
+test_Y <- test_set$logcrim
+ridge <- glmnet(train_X, train_Y, lambda = best_lambda, alpha = 0)
+pred_ridge <- predict(ridge, newx = test_X, s = best_lambda)
+mse_ridge <- mean((test_Y - pred_ridge)^2)
+mse_ridge
+```
+
+The test MSE is 0.7760607. Best lambda is `r best_lambda`
+
+### e
+
+```{r}
+set.seed(1234)
+cv_lasso <- cv.glmnet(train_X, train_Y, alpha = 1)
+best_lambda <- cv_lasso$lambda.min
+
+lasso <- glmnet(train_X, train_Y, lambda = best_lambda, alpha = 1)
+pred_lasso <- predict(lasso, newx = test_X, s = best_lambda)
+mse_lasso <- mean((test_Y - pred_lasso)^2)
+mse_lasso
+```
+
+The test MSE is 0.702
+
+### f
+
+```{r}
+Boston %>%
+keep(is.numeric) %>%
+gather() %>%
+ggplot(aes(value)) +
+facet_wrap(~ key, scales = "free") +
+geom_histogram()
+
+pairs(data.frame(Boston[, c(1,2,3,4,5, 15)]))
+pairs(data.frame(Boston[, c(6,7,8,9,10, 15)]))
+pairs(data.frame(Boston[, c(11,12,13,14, 15)]))
+```
+
+As seen above, many predictors are not normal. Moreover, when we look at the pairwise scatterplots, we can see there is multicolinearity between the predictors, and there are also some non-linear relationships between the dependent and independent variables. We shall use Box-Cox to fix the non-normality.
+
+```{r}
+m <- lm(crim ~ . - logcrim, data = train_set)
+boxcox(m)
+```
+
+As shown above, the most likely transformation for the y variable, crim, should be log transform. However, we already have a logcrim. So we do not need to do anything really.
+
+```{r}
+m_baseline <- lm(cbind(train_set$indus, train_set$nox, train_set$rm, train_set$age, train_set$dis, train_set$rad, train_set$tax, train_set$ptratio, train_set$black, train_set$lstat, train_set$medv)~1)
+powerTransform(m_baseline)
+
+m_full <- lm(logcrim ~ . + I(indus^0.6) + I(nox ^ -1.5) + I(rm^1.03) + I(age ^ 1.3) + log(dis) + I(rad^0.24) + I(tax^0.7) + I(ptratio^4.77) + I(black^4) + log(lstat) + I(medv^0.5), data = train_set)
+
+backward_selection <- stepAIC(m_full, direction = "backward")
+backward_selection
+```
+
+```{r}
+m_backward_selection <- lm(formula = logcrim ~ crim + zn + indus + chas + rad + tax + 
+    ptratio + black + lstat + I(indus^0.6) + I(nox^-1.5) + I(age^1.3) + 
+    I(rad^0.24) + I(tax^0.7) + I(ptratio^4.77) + I(black^4) + 
+    log(lstat), data = train_set)
+pred_backward_selection <- predict(m_backward_selection, newdata = test_set)
+mse_backward <- mean((test_set$logcrim - pred_backward_selection)^2)
+mse_backward
+```
+
+The MSE achieved with backward selection is 0.49
+
+```{r}
+train_X <- model.matrix(logcrim ~ . + I(indus^0.6) + I(nox ^ -1.5) + I(rm^1.03) + I(age ^ 1.3) + log(dis) + I(rad^0.24) + I(tax^0.7) + I(ptratio^4.77) + I(black^4) + log(lstat) + I(medv^0.5), data = train_set)
+train_Y <- train_set$logcrim
+cv_ridge <- cv.glmnet(train_X, train_Y, alpha = 0)
+
+test_X <- model.matrix(logcrim ~ . + I(indus^0.6) + I(nox ^ -1.5) + I(rm^1.03) + I(age ^ 1.3) + log(dis) + I(rad^0.24) + I(tax^0.7) + I(ptratio^4.77) + I(black^4) + log(lstat) + I(medv^0.5), data = test_set)
+test_Y <- test_set$logcrim
+best_lambda <- cv_ridge$lambda.min
+m_ridge <- glmnet(train_X, train_Y, lambda = best_lambda, alpha = 0)
+pred_ridge <- predict(m_ridge, s = best_lambda, newx = test_X)
+mean((test_Y - pred_ridge)^2)
+```
+
+The MSE achieved with ridge regression is 0.56
+
+```{r}
+set.seed(123)
+train_X <- model.matrix(logcrim ~ . + I(indus^0.6) + I(nox ^ -1.5) + I(rm^1.03) + I(age ^ 1.3) + log(dis) + I(rad^0.24) + I(tax^0.7) + I(ptratio^4.77) + I(black^4) + log(lstat) + I(medv^0.5), data = train_set)
+train_Y <- train_set$logcrim
+cv_lasso <- cv.glmnet(train_X, train_Y, alpha = 1)
+
+test_X <- model.matrix(logcrim ~ . + I(indus^0.6) + I(nox ^ -1.5) + I(rm^1.03) + I(age ^ 1.3) + log(dis) + I(rad^0.24) + I(tax^0.7) + I(ptratio^4.77) + I(black^4) + log(lstat) + I(medv^0.5), data = test_set)
+test_Y <- test_set$logcrim
+best_lambda <- cv_lasso$lambda.min
+m_lasso <- glmnet(train_X, train_Y, lambda = best_lambda, alpha = 1)
+pred_lasso <- predict(m_lasso, s = best_lambda, newx = test_X)
+mean((test_Y - pred_lasso)^2)
+```
+The MSE achieved with lasso is 0.47
+
+As seen above, transforming the variables so that they are more normal / linear is helpful in reducing the MSE.
+
+
+
+
+
